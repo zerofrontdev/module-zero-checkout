@@ -6,3 +6,5 @@
 "Valid EU VAT number (VIES).","Дійсний номер платника ПДВ ЄС (VIES)."
 "VIES doesn't know this VAT number. Check it, with or without the country prefix.","VIES не знає цього номера платника ПДВ. Перевірте його, з префіксом країни чи без."
 "VIES can't be reached right now: the number will be checked with the order.","VIES зараз недоступний: номер перевіримо разом із замовленням."
+"Sign in or create an account to check out.","Увійдіть або створіть обліковий запис, щоб оформити замовлення."
+"Sign in or create an account to place this order.","Увійдіть або створіть обліковий запис, щоб оформити це замовлення."

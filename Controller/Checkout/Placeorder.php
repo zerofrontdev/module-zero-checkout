@@ -81,7 +81,8 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
         $params = $this->request->getParams();
 
         $shippingMethod = (string) ($params['shipping_method'] ?? '');
-        if ($shippingMethod === '') {
+        // Only virtual items (licenses, gift cards): nothing to ship.
+        if ($shippingMethod === '' && !$quote->isVirtual()) {
             $this->messageManager->addErrorMessage(__('Please select a shipping method.'));
             $resultRedirect->setPath('zero/checkout/index');
 
@@ -100,17 +101,19 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
             $this->addressUpdater->apply($quote, $params);
             $this->addressUpdater->applyBilling($quote, $params);
 
-            $shippingAddress = $quote->getShippingAddress();
-            $rate = $shippingAddress->getShippingRateByCode($shippingMethod);
-            if (!$rate) {
-                throw new LocalizedException(
-                    __('The selected shipping method is no longer available for this address.')
-                );
+            if (!$quote->isVirtual()) {
+                $shippingAddress = $quote->getShippingAddress();
+                $rate = $shippingAddress->getShippingRateByCode($shippingMethod);
+                if (!$rate) {
+                    throw new LocalizedException(
+                        __('The selected shipping method is no longer available for this address.')
+                    );
+                }
+                $shippingDescription = trim($rate->getCarrierTitle() . ' - ' . $rate->getMethodTitle(), ' -');
+                $shippingAddress->setShippingDescription($shippingDescription);
+                $shippingAddress->setShippingMethod($shippingMethod);
+                $shippingAddress->setCollectShippingRates(true);
             }
-            $shippingDescription = trim($rate->getCarrierTitle() . ' - ' . $rate->getMethodTitle(), ' -');
-            $shippingAddress->setShippingDescription($shippingDescription);
-            $shippingAddress->setShippingMethod($shippingMethod);
-            $shippingAddress->setCollectShippingRates(true);
 
             // Card tokens/ids filled in by each payment form's own JS, passed through
             // generically in additional_data (keys a method doesn't send are just absent).

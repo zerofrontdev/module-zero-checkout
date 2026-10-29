@@ -8,6 +8,11 @@
  * field's blur could otherwise send the old choice; hx-sync shares the
  * address fields' group so the newest request wins.
  *
+ * The block also refetches itself (with the items and totals out of band)
+ * when the cart changes elsewhere on the page, e.g. an item removed in the
+ * mini-cart: the rates, the summary and the free shipping bar then agree
+ * with the cart again.
+ *
  * @var \Magento\Framework\Escaper $escaper
  * @var \Zero\Checkout\ViewModel\Checkout\CheckoutPage $viewModel
  */
@@ -16,8 +21,14 @@ $rates = $viewModel->getAvailableShippingRates();
 $selected = $viewModel->getSelectedShippingMethod();
 $shippingMethodsUrl = $escaper->escapeUrl($block->getUrl('zero/checkout/shippingmethods'));
 $isOob = (bool) $block->getData('isOob');
+$codes = array_map(static fn ($rate) => $rate->getCode(), $rates);
+// A method that is no longer offered (free shipping after the cart went under its minimum) isn't kept:
+// the first rate is checked, as the controller has also selected it.
+$selected = in_array($selected, $codes, true) ? $selected : null;
 ?>
-<div id="shipping-methods" class="flex flex-col gap-2"<?= $isOob ? ' hx-swap-oob="true"' : '' ?>>
+<div id="shipping-methods" class="flex flex-col gap-2"<?= $isOob ? ' hx-swap-oob="true"' : '' ?>
+     hx-get="<?= /* @noEscape */ $shippingMethodsUrl ?>" hx-trigger="cart:updated from:body"
+     hx-target="this" hx-swap="outerHTML" hx-include="closest form" hx-sync="this:replace">
     <?php if (empty($rates)) : ?>
         <p class="text-sm text-base-content/60">
             <?= $escaper->escapeHtml(__('Enter a complete address above to see shipping options.')) ?>

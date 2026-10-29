@@ -23,7 +23,8 @@ use Zero\Checkout\ViewModel\Checkout\CheckoutPage;
  *     </type>
  *
  * Item name = method code, value = the line under its title ('' for none).
- * The method must still be enabled and available.
+ * The method must still be enabled and available. The line is translated
+ * when shown (di.xml values are not): the module's i18n/<locale>.csv has it.
  */
 class SupportedPaymentMethods
 {
@@ -51,6 +52,8 @@ class SupportedPaymentMethods
     /** Description registered with the code, '' if none. */
     public function getDescription(string $code): string
     {
-        return (string) ($this->methods[$code] ?? '');
+        $description = (string) ($this->methods[$code] ?? '');
+
+        return $description === '' ? '' : (string) __($description);
     }
 }

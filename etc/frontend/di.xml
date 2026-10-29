@@ -17,6 +17,7 @@
     <type name="Zero\Checkout\Controller\Checkout\Placeorder">
         <arguments>
             <argument name="validators" xsi:type="array">
+                <item name="guest_checkout" xsi:type="object">Zero\Checkout\Model\PlaceOrder\GuestCheckoutValidator</item>
                 <item name="agreements" xsi:type="object">Zero\Checkout\Model\PlaceOrder\AgreementsValidator</item>
                 <item name="order_comment" xsi:type="object">Zero\Checkout\Model\PlaceOrder\OrderComment</item>
             </argument>

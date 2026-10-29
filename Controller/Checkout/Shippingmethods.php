@@ -11,6 +11,9 @@ namespace Zero\Checkout\Controller\Checkout;
 use Magento\Checkout\Model\Session as CheckoutSession;
 use Zero\Core\Controller\PrivateFragmentActionInterface;
 use Magento\Framework\App\RequestInterface;
+use Magento\Framework\Controller\Result\Raw;
+use Magento\Framework\Controller\ResultFactory;
+use Magento\Framework\UrlInterface;
 use Magento\Framework\View\Result\Layout;
 use Magento\Framework\View\Result\LayoutFactory;
 use Zero\Checkout\Model\Checkout\ShippingAddressUpdater;
@@ -28,41 +31,63 @@ class Shippingmethods implements PrivateFragmentActionInterface
 {
     private const BLOCK_NAME = 'zero.checkout.shippingmethods';
     private const TOTALS_BLOCK_NAME = 'zero.checkout.ordersummarytotals';
+    private const ITEMS_BLOCK_NAME = 'zero.checkout.ordersummaryitems';
 
     public function __construct(
         private readonly LayoutFactory $resultLayoutFactory,
         private readonly CheckoutSession $checkoutSession,
         private readonly ShippingAddressUpdater $addressUpdater,
-        private readonly RequestInterface $request
+        private readonly RequestInterface $request,
+        private readonly ResultFactory $resultFactory,
+        private readonly UrlInterface $url
     ) {
     }
 
     /**
-     * @return Layout
+     * @return Layout|Raw
      */
     public function execute()
     {
         $quote = $this->checkoutSession->getQuote();
+        // The cart was emptied elsewhere on the page (the mini-cart): nothing left to check out.
+        if (!$quote->getItemsCount()) {
+            /** @var Raw $empty */
+            $empty = $this->resultFactory->create(ResultFactory::TYPE_RAW);
+            $empty->setHeader('HX-Redirect', $this->url->getUrl('checkout/cart'));
+
+            return $empty->setContents('');
+        }
         $this->addressUpdater->apply($quote, $this->request->getParams());
 
-        $submittedMethod = (string) $this->request->getParam('shipping_method', '');
-        if ($submittedMethod !== '') {
-            $address = $quote->getShippingAddress();
-            $rate = $address->getShippingRateByCode($submittedMethod);
+        // The method asked for, else the one already chosen, else the first one offered: a method
+        // that is no longer offered (free shipping once the cart is under its minimum) isn't kept.
+        $address = $quote->getShippingAddress();
+        $rate = null;
+        foreach ([(string) $this->request->getParam('shipping_method', ''), (string) $address->getShippingMethod()] as $code) {
+            $rate = $code !== '' ? $address->getShippingRateByCode($code) : false;
             if ($rate) {
-                $shippingDescription = trim($rate->getCarrierTitle() . ' - ' . $rate->getMethodTitle(), ' -');
-                $address->setShippingDescription($shippingDescription);
-                $address->setShippingMethod($submittedMethod);
-                $address->setCollectShippingRates(true);
-                $quote->setTotalsCollectedFlag(false);
-                $quote->collectTotals();
+                break;
             }
+        }
+        if (!$rate && !$quote->isVirtual()) {
+            $rates = $address->getAllShippingRates();
+            $rate = $rates ? reset($rates) : null;
+        }
+        if ($rate && $rate->getCode() !== $address->getShippingMethod()
+            || $rate && $this->request->getParam('shipping_method')
+        ) {
+            $address->setShippingDescription(trim($rate->getCarrierTitle() . ' - ' . $rate->getMethodTitle(), ' -'));
+            $address->setShippingMethod($rate->getCode());
+            $address->setCollectShippingRates(true);
+            $quote->setTotalsCollectedFlag(false);
+            $quote->collectTotals();
         }
 
         $resultLayout = $this->resultLayoutFactory->create();
         $resultLayout->addDefaultHandle();
         $resultLayout->getLayout()->addOutputElement(self::BLOCK_NAME);
         $resultLayout->getLayout()->addOutputElement(self::TOTALS_BLOCK_NAME);
+        $resultLayout->getLayout()->addOutputElement(self::ITEMS_BLOCK_NAME);
 
         return $resultLayout;
     }

@@ -27,6 +27,7 @@ class Config
     public const LAYOUT_STEPS = 'steps';
     public const XML_PATH_ADDRESS_AUTOCOMPLETE = 'checkout/zero_checkout/address_autocomplete';
     public const XML_PATH_WEBHOOK_QUEUE = 'checkout/zero_checkout/webhook_queue';
+    public const XML_PATH_HEADLESS_URL = 'checkout/zero_checkout/headless_url';
     /** Magento's own: Customers > Customer Configuration > Name and Address Options > Show Company. */
     public const XML_PATH_COMPANY_SHOW = 'customer/address/company_show';
     /** Magento's own: Customers > Customer Configuration > Create New Account Options > Show VAT Number on Storefront. */
@@ -102,5 +103,16 @@ class Config
     public function isLoginEnabled(int|string|null $storeId = null): bool
     {
         return $this->scopeConfig->isSetFlag(self::XML_PATH_LOGIN, ScopeInterface::SCOPE_STORE, $storeId);
+    }
+
+    /**
+     * The headless storefront's origin for this store view ('' when the Zero
+     * theme is the storefront): redirect payments send the customer back there.
+     */
+    public function headlessUrl(?int $storeId = null): string
+    {
+        $url = trim((string) $this->scopeConfig->getValue(self::XML_PATH_HEADLESS_URL, ScopeInterface::SCOPE_STORE, $storeId));
+
+        return preg_match('#^https?://#i', $url) ? rtrim($url, '/') : '';
     }
 }

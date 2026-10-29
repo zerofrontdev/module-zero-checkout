@@ -240,9 +240,10 @@ class PlaceorderTest extends TestCase
         $address = $this->createPartialMock(Address::class, ['getShippingRateByCode']);
         $address->method('getShippingRateByCode')->willReturn($this->rate);
         $quote = $this->createPartialMockWithReflection(Quote::class, [
-            'getId', 'getShippingAddress', 'getPayment', 'collectTotals', 'setTotalsCollectedFlag', 'getBaseGrandTotal',
+            'getId', 'getShippingAddress', 'getPayment', 'collectTotals', 'setTotalsCollectedFlag', 'getBaseGrandTotal', 'isVirtual',
         ]);
         $quote->method('getId')->willReturn(9);
+        $quote->method('isVirtual')->willReturn(false);
         // Something to pay (nothing would place it with "free", Zero_GiftCard's case).
         $quote->method('getBaseGrandTotal')->willReturn(42.0);
         $quote->method('getShippingAddress')->willReturn($address);

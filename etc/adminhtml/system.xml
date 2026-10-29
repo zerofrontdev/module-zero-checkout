@@ -66,6 +66,12 @@
                     <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
                     <config_path>checkout/zero_checkout/coupon</config_path>
                 </field>
+                <field id="headless_url" translate="label comment" type="text" sortOrder="15" showInDefault="1" showInWebsite="1" showInStore="1" canRestore="1">
+                    <label>Headless Storefront URL</label>
+                    <comment>The origin of a headless storefront serving this store view (https://shop.example.com). Set, redirect payments (Stripe Checkout, Afterpay, Zip, PayPal) send the customer back to its /checkout/return page instead of this store's; empty for the Zero theme.</comment>
+                    <validate>validate-url</validate>
+                    <config_path>checkout/zero_checkout/headless_url</config_path>
+                </field>
                 <field id="order_comment" translate="label comment" type="select" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="1" canRestore="1">
                     <label>Order Comment</label>
                     <comment>Optional note from the shopper (up to 1000 characters). Saved on the order: Comments History in the admin order view, and the order page in the customer's account.</comment>

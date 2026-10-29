@@ -27,6 +27,7 @@ use Magento\Quote\Model\Quote;
 use Magento\Quote\Model\Quote\Address;
 use Magento\Quote\Model\Quote\Address\Rate;
 use Magento\Quote\Model\Quote\Item;
+use Magento\Tax\Model\Config as TaxConfig;
 use Zero\Checkout\Model\Config;
 use Zero\Checkout\Model\SupportedPaymentMethods;
 
@@ -50,6 +51,9 @@ class CheckoutPage implements ArgumentInterface
     /** @var MethodInterface[]|null */
     private ?array $availablePaymentMethods = null;
 
+    /** @var array<string, \Magento\Quote\Model\Quote\Address\Total>|null */
+    private ?array $totals = null;
+
     public function __construct(
         private readonly CheckoutSession $checkoutSession,
         private readonly CustomerSession $customerSession,
@@ -62,7 +66,8 @@ class CheckoutPage implements ArgumentInterface
         private readonly Config $config,
         private readonly SupportedPaymentMethods $supportedPaymentMethods,
         private readonly DirectoryHelper $directoryHelper,
-        private readonly PriceCurrencyInterface $priceCurrency
+        private readonly PriceCurrencyInterface $priceCurrency,
+        private readonly TaxConfig $taxConfig
     ) {
     }
 
@@ -134,6 +139,15 @@ class CheckoutPage implements ArgumentInterface
         return $this->config->isStepLayout();
     }
 
+    /**
+     * Only virtual items (licenses, gift cards, downloads): nothing to ship,
+     * so no shipping method and one address, the billing one.
+     */
+    public function isVirtual(): bool
+    {
+        return (bool) $this->getQuote()->isVirtual();
+    }
+
     public function isGuest(): bool
     {
         return !$this->customerSession->isLoggedIn();
@@ -153,9 +167,46 @@ class CheckoutPage implements ArgumentInterface
         return $this->formKey->getFormKey();
     }
 
+    /**
+     * The subtotal with or without tax, as Sales > Tax > Shopping Cart Display
+     * Settings says (prices with GST inside for an Australian store).
+     */
     public function getFormattedSubtotal(): string
     {
-        return $this->formatQuoteAmount((float) $this->getQuote()->getSubtotal());
+        $quote = $this->getQuote();
+        $subtotal = (float) $quote->getSubtotal();
+        if ($this->taxConfig->displayCartSubtotalInclTax($quote->getStoreId())
+            || $this->taxConfig->displayCartSubtotalBoth($quote->getStoreId())) {
+            $total = $this->totals()['subtotal'] ?? null;
+            $subtotal = (float) ($total?->getValueInclTax() ?: $subtotal);
+        }
+
+        return $this->formatQuoteAmount($subtotal);
+    }
+
+    /**
+     * The order's tax for the summary, or null when there is none: `included`
+     * when the prices shown already hold it (then it reads "Includes GST $38.63"
+     * under the total), otherwise a line of its own before the total.
+     *
+     * @return array{title: string, value: string, included: bool}|null
+     */
+    public function getTaxLine(): ?array
+    {
+        $quote = $this->getQuote();
+        $total = $this->totals()['tax'] ?? null;
+        $amount = (float) $total?->getValue();
+        if ($amount <= 0.0) {
+            return null;
+        }
+        $storeId = $quote->getStoreId();
+
+        return [
+            'title' => (string) ($total->getTitle() ?: __('Tax')),
+            'value' => $this->formatQuoteAmount($amount),
+            'included' => $this->taxConfig->displayCartSubtotalInclTax($storeId)
+                || $this->taxConfig->displayCartSubtotalBoth($storeId),
+        ];
     }
 
     public function getFormattedShippingAmount(): ?string
@@ -165,7 +216,10 @@ class CheckoutPage implements ArgumentInterface
             return null;
         }
 
-        return $this->formatQuoteAmount((float) $address->getShippingAmount());
+        $storeId = $this->getQuote()->getStoreId();
+        $inclTax = $this->taxConfig->displayCartShippingInclTax($storeId) || $this->taxConfig->displayCartShippingBoth($storeId);
+
+        return $this->formatQuoteAmount((float) ($inclTax ? $address->getShippingInclTax() : $address->getShippingAmount()));
     }
 
     /**
@@ -192,7 +246,7 @@ class CheckoutPage implements ArgumentInterface
     public function getExtraTotals(): array
     {
         $extra = [];
-        foreach ($this->getQuote()->getTotals() as $code => $total) {
+        foreach ($this->totals() as $code => $total) {
             if (in_array($code, self::SUMMARY_TOTALS, true) || !(float) $total->getValue()) {
                 continue;
             }
@@ -204,6 +258,17 @@ class CheckoutPage implements ArgumentInterface
         }
 
         return $extra;
+    }
+
+    /**
+     * The quote's totals, collected once per render: Quote::getTotals() runs every
+     * collector's fetch() on each call, and the summary asks three times.
+     *
+     * @return array<string, \Magento\Quote\Model\Quote\Address\Total>
+     */
+    private function totals(): array
+    {
+        return $this->totals ??= $this->getQuote()->getTotals();
     }
 
     public function getFormattedGrandTotal(): string
@@ -240,7 +305,10 @@ class CheckoutPage implements ArgumentInterface
 
     public function getFormattedItemPrice(Item $item): string
     {
-        return $this->formatQuoteAmount((float) $item->getRowTotal());
+        $storeId = $this->getQuote()->getStoreId();
+        $inclTax = $this->taxConfig->displayCartPricesInclTax($storeId) || $this->taxConfig->displayCartPricesBoth($storeId);
+
+        return $this->formatQuoteAmount((float) ($inclTax ? ($item->getRowTotalInclTax() ?: $item->getRowTotal()) : $item->getRowTotal()));
     }
 
     /**

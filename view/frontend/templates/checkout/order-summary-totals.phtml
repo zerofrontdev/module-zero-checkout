@@ -3,7 +3,8 @@
  * Copyright © 2026 Roman Pasichnyk
  * SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
  *
- * Subtotal / Shipping / Discount / other modules' totals (a gift card) / Total
+ * Subtotal / Shipping / Discount / other modules' totals (a gift card) / Tax
+ * (or "Includes GST" under the total when the prices hold it) / Total
  * of the order summary, rendered inline and as an hx-swap-oob fragment with
  * every shipping-rate refresh, so the total shown always matches what Place
  * Order will charge.
@@ -13,6 +14,7 @@
  */
 $viewModel = $block->getData('viewModel');
 $isOob = (bool) $block->getData('isOob');
+$tax = $viewModel->getTaxLine();
 ?>
 <div id="order-summary-totals" class="flex flex-col gap-2 border-t border-base-300 pt-3 text-sm"
     <?= $isOob ? 'hx-swap-oob="true"' : '' ?>>
@@ -38,10 +40,22 @@ $isOob = (bool) $block->getData('isOob');
             <span class="text-success"><?= $escaper->escapeHtml($total['value']) ?></span>
         </div>
     <?php endforeach; ?>
+    <?php if ($tax && !$tax['included']) : ?>
+        <div class="flex items-center justify-between" data-total="tax">
+            <span class="text-base-content/70"><?= $escaper->escapeHtml($tax['title']) ?></span>
+            <span><?= $escaper->escapeHtml($tax['value']) ?></span>
+        </div>
+    <?php endif; ?>
     <div class="flex items-center justify-between font-semibold text-base border-t border-base-300 pt-2 mt-1">
         <span><?= $escaper->escapeHtml(__('Total')) ?></span>
         <strong><?= $escaper->escapeHtml($viewModel->getFormattedGrandTotal()) ?></strong>
     </div>
+    <?php if ($tax && $tax['included']) : ?>
+        <div class="flex items-center justify-between text-xs text-base-content/70" data-total="tax">
+            <span><?= $escaper->escapeHtml(__('Includes %1', $tax['title'])) ?></span>
+            <span><?= $escaper->escapeHtml($tax['value']) ?></span>
+        </div>
+    <?php endif; ?>
 </div>
 <?php
 // Out of band, the payment choices follow when there is nothing to pay, or

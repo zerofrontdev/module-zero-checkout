@@ -1,0 +1,33 @@
+<?php
+/**
+ * Copyright © 2026 Roman Pasichnyk
+ * SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
+ *
+ * The items of the order summary, rendered inline and as an hx-swap-oob
+ * fragment with every shipping-rate refresh (also the one after the cart
+ * changes in the mini-cart), so the list matches the cart.
+ *
+ * @var \Magento\Framework\Escaper $escaper
+ * @var \Zero\Checkout\ViewModel\Checkout\CheckoutPage $viewModel
+ */
+$viewModel = $block->getData('viewModel');
+$isOob = (bool) $block->getData('isOob');
+?>
+<ul id="order-summary-items" class="flex flex-col gap-3 mb-4 max-h-80 overflow-y-auto"<?= $isOob ? ' hx-swap-oob="true"' : '' ?>>
+    <?php foreach ($viewModel->getItems() as $item) : ?>
+        <li class="flex items-start justify-between gap-2 text-sm">
+            <span class="flex-1 min-w-0">
+                <?= $escaper->escapeHtml($item->getName()) ?>
+                <span class="text-base-content/60">&times;<?= (float) $item->getQty() ?></span>
+                <?php foreach ($viewModel->getItemOptions($item) as $option) : ?>
+                    <span class="block text-xs text-base-content/60">
+                        <?= $escaper->escapeHtml($option['label']) ?>: <?= $escaper->escapeHtml($option['value']) ?>
+                    </span>
+                <?php endforeach; ?>
+            </span>
+            <span class="font-medium whitespace-nowrap">
+                <?= $escaper->escapeHtml($viewModel->getFormattedItemPrice($item)) ?>
+            </span>
+        </li>
+    <?php endforeach; ?>
+</ul>

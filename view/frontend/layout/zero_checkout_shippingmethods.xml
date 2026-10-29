@@ -4,7 +4,8 @@
     SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
 
     Response of Controller\Checkout\Shippingmethods: #shipping-methods plus the
-    order summary totals as an out-of-band block, so one request updates both.
+    order summary's totals and items as out-of-band blocks, so one request
+    updates all three.
 -->
 <layout xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="urn:magento:framework:View/Layout/etc/layout_generic.xsd">
@@ -17,6 +18,13 @@
         </block>
         <block class="Magento\Framework\View\Element\Template" name="zero.checkout.ordersummarytotals" cacheable="false"
                template="Zero_Checkout::checkout/order-summary-totals.phtml">
+            <arguments>
+                <argument name="viewModel" xsi:type="object">Zero\Checkout\ViewModel\Checkout\CheckoutPage</argument>
+                <argument name="isOob" xsi:type="boolean">true</argument>
+            </arguments>
+        </block>
+        <block class="Magento\Framework\View\Element\Template" name="zero.checkout.ordersummaryitems" cacheable="false"
+               template="Zero_Checkout::checkout/order-summary-items.phtml">
             <arguments>
                 <argument name="viewModel" xsi:type="object">Zero\Checkout\ViewModel\Checkout\CheckoutPage</argument>
                 <argument name="isOob" xsi:type="boolean">true</argument>

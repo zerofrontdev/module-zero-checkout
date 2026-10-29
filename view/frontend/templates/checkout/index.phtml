@@ -16,7 +16,9 @@
  * @var \Zero\Checkout\ViewModel\Checkout\CheckoutPage $viewModel
  */
 $viewModel = $block->getData('viewModel');
-$steps = $viewModel->isStepLayout();
+// Only virtual items: one address (the billing one), no shipping, one page.
+$virtual = $viewModel->isVirtual();
+$steps = $viewModel->isStepLayout() && !$virtual;
 // Step layout: data-step marks each section's step; Zero_Checkout::js/checkout-steps.js
 // shows one step at a time. Without it every step shows, as on one page.
 $step = static fn (int $n): string => $steps ? ' data-step="' . $n . '"' : '';
@@ -59,7 +61,7 @@ $stepNames = [1 => __('Address'), 2 => __('Shipping'), 3 => __('Payment')];
             <?php endif; ?>
 
             <section class="fieldset"<?= /* @noEscape */ $step(1) ?>>
-                <h2 class="text-lg font-semibold mb-3"><?= $escaper->escapeHtml(__('Shipping Address')) ?></h2>
+                <h2 class="text-lg font-semibold mb-3"><?= $escaper->escapeHtml($virtual ? __('Billing Address') : __('Shipping Address')) ?></h2>
                 <?php
                 /*
                  * Saved-address picker (logged-in customers with an address book only).
@@ -103,6 +105,9 @@ $stepNames = [1 => __('Address'), 2 => __('Shipping'), 3 => __('Payment')];
              * display:none and show it permanently.
              */
             ?>
+            <?php if ($virtual) : ?>
+                <input type="hidden" name="billing_same_as_shipping" value="1" />
+            <?php else : ?>
             <section class="fieldset"<?= /* @noEscape */ $step(1) ?>>
                 <h2 class="text-lg font-semibold mb-3"><?= $escaper->escapeHtml(__('Billing Address')) ?></h2>
                 <div id="billing-toggle" class="mb-4">
@@ -119,6 +124,7 @@ $stepNames = [1 => __('Address'), 2 => __('Shipping'), 3 => __('Payment')];
                     ->setData('viewModel', $viewModel)
                     ->toHtml() ?>
             </section>
+            <?php endif; ?>
             <?php if ($steps) : ?>
                 <div data-step="1" data-step-controls hidden>
                     <button type="button" class="btn btn-primary" data-step-next><?= $escaper->escapeHtml(__('Continue to Shipping')) ?></button>
@@ -127,7 +133,8 @@ $stepNames = [1 => __('Address'), 2 => __('Shipping'), 3 => __('Payment')];
         </div>
 
         <div class="flex flex-col gap-8<?= $steps ? ' lg:col-start-1' : '' ?>">
-            <section class="fieldset"<?= /* @noEscape */ $step(2) ?>>
+            <?php /* Kept but hidden for a virtual cart: the address fields still target #shipping-methods for the totals. */ ?>
+            <section class="fieldset"<?= /* @noEscape */ $step(2) ?><?= $virtual ? ' hidden' : '' ?>>
                 <h2 class="text-lg font-semibold mb-3"><?= $escaper->escapeHtml(__('Shipping Method')) ?></h2>
                 <?= $block->getLayout()
                     ->createBlock(\Magento\Framework\View\Element\Template::class)
@@ -169,24 +176,11 @@ $stepNames = [1 => __('Address'), 2 => __('Shipping'), 3 => __('Payment')];
                     <a href="<?= $escaper->escapeUrl($block->getUrl('checkout/cart')) ?>"
                        class="text-sm underline underline-offset-2"><?= $escaper->escapeHtml(__('Edit cart')) ?></a>
                 </div>
-                <ul class="flex flex-col gap-3 mb-4 max-h-80 overflow-y-auto">
-                    <?php foreach ($viewModel->getItems() as $item) : ?>
-                        <li class="flex items-start justify-between gap-2 text-sm">
-                            <span class="flex-1 min-w-0">
-                                <?= $escaper->escapeHtml($item->getName()) ?>
-                                <span class="text-base-content/60">&times;<?= (float) $item->getQty() ?></span>
-                                <?php foreach ($viewModel->getItemOptions($item) as $option) : ?>
-                                    <span class="block text-xs text-base-content/60">
-                                        <?= $escaper->escapeHtml($option['label']) ?>: <?= $escaper->escapeHtml($option['value']) ?>
-                                    </span>
-                                <?php endforeach; ?>
-                            </span>
-                            <span class="font-medium whitespace-nowrap">
-                                <?= $escaper->escapeHtml($viewModel->getFormattedItemPrice($item)) ?>
-                            </span>
-                        </li>
-                    <?php endforeach; ?>
-                </ul>
+                <?= $block->getLayout()
+                    ->createBlock(\Magento\Framework\View\Element\Template::class)
+                    ->setTemplate('Zero_Checkout::checkout/order-summary-items.phtml')
+                    ->setData('viewModel', $viewModel)
+                    ->toHtml() ?>
                 <?= $block->getChildHtml('zero.checkout.summary.totals.before') ?>
                 <?= $block->getLayout()
                     ->createBlock(\Magento\Framework\View\Element\Template::class)
