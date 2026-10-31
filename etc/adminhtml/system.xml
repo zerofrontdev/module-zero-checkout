@@ -107,6 +107,12 @@
                     <config_path>checkout/zero_checkout/webhook_queue</config_path>
                     <comment><![CDATA[Yes: the provider gets its answer at once; the consumer <code>zero.checkout.webhook</code>, which cron starts, updates the order (through RabbitMQ when env.php has <code>queue/amqp</code>, through the database queue otherwise; when the provider can't be asked, five tries, then a comment on the order). No: the order is updated while the provider waits for the answer.]]></comment>
                 </field>
+                <field id="recheck_pending" translate="label comment" type="select" sortOrder="20" showInDefault="1" canRestore="1">
+                    <label>Recheck Pending Payments</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <config_path>checkout/zero_checkout/recheck_pending</config_path>
+                    <comment>Every 15 minutes, asks the provider about redirect-payment orders still pending (10 minutes to 7 hours old). Magento cancels them without asking after Sales > Orders Cron Settings > Pending Payment Order Lifetime (8 hours by default).</comment>
+                </field>
             </group>
         </section>
     </system>

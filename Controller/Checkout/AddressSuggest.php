@@ -45,8 +45,10 @@ class AddressSuggest implements PrivateFragmentActionInterface
      */
     public function execute()
     {
-        $query = trim((string) $this->request->getParam('street', ''));
-        $country = strtoupper(trim((string) $this->request->getParam('country_id', '')));
+        $query = $this->request->getParam('street', '');
+        $query = trim(is_scalar($query) ? (string) $query : '');
+        $country = $this->request->getParam('country_id', '');
+        $country = strtoupper(trim(is_scalar($country) ? (string) $country : ''));
         $provider = $this->pool->get();
         $suggestions = [];
         if ($provider && mb_strlen($query) >= self::MIN_LENGTH && preg_match('/^[A-Z]{0,2}$/', $country)) {

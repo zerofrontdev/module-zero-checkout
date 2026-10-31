@@ -62,10 +62,11 @@ $tax = $viewModel->getTaxLine();
 // when the page still shows that (the request's payment_list_mode).
 $request = $block->getRequest();
 if ($isOob && ($viewModel->isNothingToPay() || $request->getParam('payment_list_mode') === 'free')) {
+    $selected = $request->getParam('payment_method');
     echo $block->getLayout()
         ->createBlock(\Magento\Framework\View\Element\Template::class)
         ->setTemplate('Zero_Checkout::checkout/payment-methods.phtml')
-        ->setData(['viewModel' => $viewModel, 'isOob' => true, 'selected' => (string) $request->getParam('payment_method')])
+        ->setData(['viewModel' => $viewModel, 'isOob' => true, 'selected' => is_scalar($selected) ? (string) $selected : ''])
         ->toHtml();
 }
 ?>

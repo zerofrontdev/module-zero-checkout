@@ -44,14 +44,16 @@ class AddressLookup implements PrivateFragmentActionInterface
     public function execute()
     {
         $provider = $this->pool->get();
-        $id = (string) $this->request->getParam('lookup_id', '');
+        $id = $this->request->getParam('lookup_id', '');
+        $id = is_scalar($id) ? (string) $id : '';
         $token = (string) $this->checkoutSession->getData(AddressSuggest::TOKEN_KEY);
         $address = $provider && $id !== '' && strlen($id) < 4096 ? $provider->details($id, $token) : null;
 
         if ($address !== null) {
             $data = [];
             foreach (self::FORM_FIELDS as $field) {
-                $data[$field] = trim((string) $this->request->getParam($field, ''));
+                $data[$field] = $this->request->getParam($field, '');
+                $data[$field] = trim(is_scalar($data[$field]) ? (string) $data[$field] : '');
             }
             $data = array_merge($data, [
                 'street' => $address['street'],

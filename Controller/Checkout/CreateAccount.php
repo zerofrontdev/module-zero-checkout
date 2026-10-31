@@ -28,9 +28,13 @@ use Psr\Log\LoggerInterface;
 /**
  * "Create an account" on the success page in one step: the guest picks a
  * password, the account is made from the order and gets it, and the customer
- * is signed in. Only for the session's last guest order whose email has no
- * account, with registration allowed (Magento\Checkout\Block\Registration's
- * rules). HTMX gets the prompt back or an HX-Redirect.
+ * is signed in. When the store requires email confirmation
+ * (customer/create_account/confirm), Magento sends the confirmation link
+ * instead and the customer is not signed in: they confirm, then sign in (as
+ * Magento's own registration does). Only for the session's last guest order
+ * whose email has no account, with registration allowed
+ * (Magento\Checkout\Block\Registration's rules). HTMX gets the prompt back or
+ * an HX-Redirect.
  */
 class CreateAccount implements HttpPostActionInterface
 {
@@ -61,7 +65,13 @@ class CreateAccount implements HttpPostActionInterface
     {
         $isHtmx = (bool) $this->request->getHeader('HX-Request');
         try {
-            $order = $this->createAccount();
+            [$order, $customer] = $this->createAccount();
+            $mustConfirm = $this->accountManagement->getConfirmationStatus((int) $customer->getId())
+                === AccountManagementInterface::ACCOUNT_CONFIRMATION_REQUIRED;
+            if (!$mustConfirm) {
+                $this->customerSession->setCustomerDataAsLoggedIn($customer);
+                $this->customerSession->regenerateId();
+            }
         } catch (LocalizedException $e) {
             return $this->fail($e->getMessage(), $isHtmx);
         } catch (\Throwable $e) {
@@ -70,10 +80,18 @@ class CreateAccount implements HttpPostActionInterface
             return $this->fail((string) __('We can\'t create your account right now. Please try again.'), $isHtmx);
         }
 
-        $this->messageManager->addSuccessMessage(
-            __('Your account is ready. Order #%1 is in it.', $order->getIncrementId())
-        );
-        $target = $this->url->getUrl('sales/order/view', ['order_id' => $order->getEntityId()]);
+        if ($mustConfirm) {
+            // Magento's createAccount() has sent the confirmation email.
+            $this->messageManager->addSuccessMessage(
+                __('Check %1 for the confirmation link, then sign in.', (string) $customer->getEmail())
+            );
+            $target = $this->url->getUrl('customer/account/login');
+        } else {
+            $this->messageManager->addSuccessMessage(
+                __('Your account is ready. Order #%1 is in it.', $order->getIncrementId())
+            );
+            $target = $this->url->getUrl('sales/order/view', ['order_id' => $order->getEntityId()]);
+        }
         if ($isHtmx) {
             $this->response->setHeader('HX-Redirect', $target);
 
@@ -84,7 +102,9 @@ class CreateAccount implements HttpPostActionInterface
     }
 
     /**
-     * @return \Magento\Sales\Api\Data\OrderInterface
+     * The account, made from the order and given it; not signed in yet.
+     *
+     * @return array{0: \Magento\Sales\Api\Data\OrderInterface, 1: \Magento\Customer\Api\Data\CustomerInterface}
      * @throws LocalizedException
      */
     private function createAccount()
@@ -101,18 +121,18 @@ class CreateAccount implements HttpPostActionInterface
             throw new LocalizedException(__('There is already an account with this email. Sign in to see your orders.'));
         }
 
-        $password = (string) $this->request->getParam('password');
-        if ($password !== (string) $this->request->getParam('password_confirmation')) {
+        $password = $this->request->getParam('password');
+        $password = is_scalar($password) ? (string) $password : '';
+        $passwordConfirmationParam = $this->request->getParam('password_confirmation');
+        if ($password !== (is_scalar($passwordConfirmationParam) ? (string) $passwordConfirmationParam : '')) {
             throw new LocalizedException(__('Please make sure your passwords match.'));
         }
 
         $customer = $this->orderCustomerExtractor->extract($orderId);
         $customer = $this->accountManagement->createAccount($customer, $password);
         $this->customerAssignment->execute($order, $customer);
-        $this->customerSession->setCustomerDataAsLoggedIn($customer);
-        $this->customerSession->regenerateId();
 
-        return $order;
+        return [$order, $customer];
     }
 
     /**

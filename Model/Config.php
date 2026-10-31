@@ -27,6 +27,7 @@ class Config
     public const LAYOUT_STEPS = 'steps';
     public const XML_PATH_ADDRESS_AUTOCOMPLETE = 'checkout/zero_checkout/address_autocomplete';
     public const XML_PATH_WEBHOOK_QUEUE = 'checkout/zero_checkout/webhook_queue';
+    public const XML_PATH_RECHECK_PENDING = 'checkout/zero_checkout/recheck_pending';
     public const XML_PATH_HEADLESS_URL = 'checkout/zero_checkout/headless_url';
     /** Magento's own: Customers > Customer Configuration > Name and Address Options > Show Company. */
     public const XML_PATH_COMPANY_SHOW = 'customer/address/company_show';
@@ -54,6 +55,14 @@ class Config
     public function isWebhookQueued(): bool
     {
         return $this->scopeConfig->isSetFlag(self::XML_PATH_WEBHOOK_QUEUE);
+    }
+
+    /**
+     * Payment Webhooks > Recheck Pending Payments (Cron\RecheckPending). Off by default.
+     */
+    public function isRecheckPending(?int $storeId = null): bool
+    {
+        return $this->scopeConfig->isSetFlag(self::XML_PATH_RECHECK_PENDING, ScopeInterface::SCOPE_STORE, $storeId);
     }
 
     public function isCouponEnabled(int|string|null $storeId = null): bool

@@ -40,13 +40,14 @@ class CartOrder
         } catch (NoSuchEntityException) {
             $quoteId = 0;
         }
+        // An unknown masked id is 0, which must not match an order without a quote (quote_id 0).
         /** @var Order $order */
         $order = $this->orders->create()
             ->addFieldToFilter('increment_id', $orderNumber)
             ->addFieldToFilter('store_id', $storeId)
             ->setPageSize(1)
             ->getFirstItem();
-        if (!$order->getId() || (int) $order->getQuoteId() !== $quoteId) {
+        if (!$order->getId() || $quoteId === 0 || (int) $order->getQuoteId() !== $quoteId) {
             throw new NoSuchEntityException(__('Could not find an order "%1" placed from this cart.', $orderNumber));
         }
 
@@ -56,6 +57,10 @@ class CartOrder
     /**
      * The cart is active again (same id) after a failed or abandoned payment,
      * as Magento\Checkout\Model\Session::restoreQuote() does for the theme.
+     *
+     * zero_checkout_quote_restored is dispatched only when the cart was
+     * inactive before. A storefront that polls can still repeat it for the
+     * same order, so a listener must match the order itself.
      */
     public function restoreQuote(Order $order): void
     {
@@ -64,8 +69,12 @@ class CartOrder
         } catch (NoSuchEntityException) {
             return;
         }
+        $wasActive = (bool) $quote->getIsActive();
         $quote->setIsActive(true)->setReservedOrderId(null);
         $this->quotes->save($quote);
         $this->eventManager->dispatch('restore_quote', ['order' => $order, 'quote' => $quote]);
+        if (!$wasActive) {
+            $this->eventManager->dispatch(ReturnResult::QUOTE_RESTORED_EVENT, ['order' => $order, 'quote' => $quote]);
+        }
     }
 }

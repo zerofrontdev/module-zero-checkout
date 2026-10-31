@@ -72,6 +72,43 @@ class ShippingAddressUpdaterTest extends TestCase
         $this->assertTrue((bool) $this->shipping->getData('collect_shipping_rates'));
     }
 
+    public function testArrayFieldsAndAnArrayEmailCountAsMissing(): void
+    {
+        $this->shipping->setData('lastname', 'Kept');
+        $this->quote->method('getCustomerEmail')->willReturn('before@example.com');
+        // email[]=1 used to raise "Array to string conversion" (a 500 on shippingmethods).
+        $this->quote->expects($this->once())->method('setCustomerEmail')->with('before@example.com');
+
+        $this->updater()->apply($this->quote, [
+            'firstname' => 'Ann',
+            'lastname' => ['x'],
+            'street' => [['5 Elm St']],
+            'company' => ['x'],
+            'email' => ['x'],
+        ]);
+
+        $this->assertSame('Ann', $this->shipping->getData('firstname'));
+        $this->assertSame('Kept', $this->shipping->getData('lastname'), 'an array keeps the value there was');
+        $this->assertNull($this->shipping->getData('street'));
+        $this->assertNull($this->shipping->getData('company'));
+    }
+
+    public function testApplyBillingIgnoresArrayFieldsAndEmail(): void
+    {
+        $this->quote->method('getCustomerEmail')->willReturn('before@example.com');
+
+        $this->updater()->applyBilling($this->quote, [
+            'billing_same_as_shipping' => '0',
+            'billing_firstname' => ['x'],
+            'billing_city' => 'Kyiv',
+            'email' => ['x'],
+        ]);
+
+        $this->assertNull($this->billing->getData('firstname'));
+        $this->assertSame('Kyiv', $this->billing->getData('city'));
+        $this->assertSame('before@example.com', $this->billing->getData('email'));
+    }
+
     public function testLoggedInCustomerEmailIsNotOverwritten(): void
     {
         $this->customer = $this->createStub(CustomerInterface::class);

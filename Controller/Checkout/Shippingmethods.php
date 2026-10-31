@@ -63,7 +63,8 @@ class Shippingmethods implements PrivateFragmentActionInterface
         // that is no longer offered (free shipping once the cart is under its minimum) isn't kept.
         $address = $quote->getShippingAddress();
         $rate = null;
-        foreach ([(string) $this->request->getParam('shipping_method', ''), (string) $address->getShippingMethod()] as $code) {
+        $shippingMethodParam = $this->request->getParam('shipping_method', '');
+        foreach ([is_scalar($shippingMethodParam) ? (string) $shippingMethodParam : '', (string) $address->getShippingMethod()] as $code) {
             $rate = $code !== '' ? $address->getShippingRateByCode($code) : false;
             if ($rate) {
                 break;

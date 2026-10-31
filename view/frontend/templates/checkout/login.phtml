@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
  *
  * "Already have an account? Sign in" above the checkout form: its own form,
- * posting to zero/checkout/login (core loginPost, then back here).
+ * posting to zero/checkout/login (core loginPost, then back here). The
+ * "recaptcha" child (the Zero theme's layout for the ReCaptchaCustomer module) is
+ * the customer_login reCAPTCHA that loginPost demands when it is on.
  *
  * @var \Magento\Framework\View\Element\Template $block
  * @var \Magento\Framework\Escaper $escaper
@@ -24,6 +26,11 @@ if (!$viewModel->isGuest() || !$viewModel->isLoginEnabled()) {
     <form method="post" action="<?= $escaper->escapeUrl($block->getUrl('zero/checkout/login')) ?>"
           class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end mt-3" id="checkout-login-form">
         <input type="hidden" name="form_key" value="<?= $escaper->escapeHtmlAttr($viewModel->getFormKey()) ?>" />
+        <?php /* Its own grid row above the inputs, so Sign In stays in the inputs' row. */ ?>
+        <?php $recaptcha = $block->getChildHtml('recaptcha'); ?>
+        <?php if ($recaptcha): ?>
+            <div class="sm:col-span-3"><?= /* @noEscape */ $recaptcha ?></div>
+        <?php endif; ?>
         <div class="field">
             <label class="label" for="checkout-login-email"><?= $escaper->escapeHtml(__('Email')) ?></label>
             <input type="email" name="login[username]" id="checkout-login-email" required

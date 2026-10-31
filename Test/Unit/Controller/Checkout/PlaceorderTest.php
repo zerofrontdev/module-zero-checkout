@@ -13,6 +13,7 @@ use Magento\Framework\App\RequestInterface;
 use Magento\Framework\Controller\Result\Redirect;
 use Magento\Framework\Controller\ResultFactory;
 use Magento\Framework\Data\Form\FormKey\Validator as FormKeyValidator;
+use Magento\Framework\Event\ManagerInterface as EventManager;
 use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Message\ManagerInterface as MessageManager;
 use Magento\Framework\TestFramework\Unit\Helper\MockCreationTrait;
@@ -22,7 +23,10 @@ use Magento\Quote\Model\Quote;
 use Magento\Quote\Model\Quote\Address;
 use Magento\Quote\Model\Quote\Address\Rate;
 use Magento\Quote\Model\Quote\Payment as QuotePayment;
+use Magento\Sales\Api\Data\OrderStatusHistoryInterface;
+use Magento\Sales\Api\Data\OrderStatusHistoryInterfaceFactory;
 use Magento\Sales\Api\OrderRepositoryInterface;
+use Magento\Sales\Api\OrderStatusHistoryRepositoryInterface;
 use Magento\Sales\Model\Order;
 use Magento\Sales\Model\Order\Payment as OrderPayment;
 use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
@@ -58,7 +62,13 @@ class PlaceorderTest extends TestCase
     private array $validators = [];
     /** @var AfterPlaceOrderInterface[] */
     private array $afterPlaceOrder = [];
+    private ?Quote $quote = null;
     private ?LoggerInterface $logger = null;
+    private ?EventManager $eventManager = null;
+    private ?OrderStatusHistoryRepositoryInterface $historyRepository = null;
+    private ?OrderStatusHistoryInterface $history = null;
+    private ?\Throwable $orderLoadFailure = null;
+    private ?OrderRepositoryInterface $orderRepository = null;
 
     protected function setUp(): void
     {
@@ -192,6 +202,44 @@ class PlaceorderTest extends TestCase
         ] + self::VALID);
     }
 
+    public function testAnArrayShippingMethodIsRefusedLikeAMissingOne(): void
+    {
+        $this->cartManagement->expects($this->never())->method('placeOrder');
+
+        // shipping_method[]=x used to raise "Array to string conversion" outside the try: a 500.
+        $this->submit(['shipping_method' => ['x']] + self::VALID);
+
+        $this->assertSame(['Please select a shipping method.'], $this->errors);
+        $this->assertSame('zero/checkout/index', $this->redirectPath);
+    }
+
+    public function testAnArrayPaymentMethodIsRefusedLikeAnUnsupportedOne(): void
+    {
+        $this->cartManagement->expects($this->never())->method('placeOrder');
+
+        $this->submit(['payment_method' => ['checkmo']] + self::VALID);
+
+        $this->assertSame(['Please select a payment method.'], $this->errors);
+    }
+
+    public function testArrayPaymentTokensAndPoNumberAreLeftOut(): void
+    {
+        $this->quotePayment->expects($this->once())->method('importData')->with([
+            'method' => 'checkmo',
+            'additional_data' => ['stripe_payment_intent_id' => 'pi_1'],
+        ]);
+
+        $this->submit([
+            'payment_method_nonce' => ['x'],
+            'stripe_payment_intent_id' => 'pi_1',
+            'authnet_data_descriptor' => ['x'],
+            'authnet_data_value' => [['x']],
+            'po_number' => ['PO-42'],
+        ] + self::VALID);
+
+        $this->assertSame('checkout/onepage/success', $this->redirectPath);
+    }
+
     public function testPaymentFailureIsShownToCustomer(): void
     {
         $this->cartManagement->method('placeOrder')
@@ -210,6 +258,158 @@ class PlaceorderTest extends TestCase
         $this->submit(self::VALID);
 
         $this->assertSame(['We can\'t place the order right now. Please try again.'], $this->errors);
+    }
+
+    public function testValidationFailureDispatchesTheFailureEvent(): void
+    {
+        $failure = new LocalizedException(__('Your card payment was not completed.'));
+        $this->cartManagement->method('placeOrder')->willThrowException($failure);
+        $events = [];
+        $this->eventManager = $this->recordingEvents($events);
+
+        $this->submit(['payment_method' => 'zero_stripe'] + self::VALID);
+
+        $this->assertCount(1, $events);
+        [$name, $data] = $events[0];
+        $this->assertSame('zero_checkout_place_order_failed', $name);
+        $this->assertSame($this->quote, $data['quote']);
+        $this->assertSame('zero_stripe', $data['request']['payment_method']);
+        $this->assertSame($failure, $data['exception']);
+        $this->assertNull($data['order_id']);
+        $this->assertSame(['Your card payment was not completed.'], $this->errors);
+    }
+
+    public function testGenericFailureIsLoggedWithIdsAndDispatched(): void
+    {
+        $failure = new \RuntimeException('SQL error');
+        $this->cartManagement->method('placeOrder')->willThrowException($failure);
+        $this->quotePayment->method('getMethod')->willReturn('zero_stripe');
+        $this->quotePayment->method('getAdditionalInformation')->willReturnMap([['stripe_payment_intent_id', 'pi_1']]);
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('error')->with('Zero Checkout: place order failed', [
+            'quote_id' => 9,
+            'reserved_order_id' => '000000077',
+            'payment_method' => 'zero_stripe',
+            'stripe_payment_intent_id' => 'pi_1',
+            'exception' => $failure,
+        ]);
+        $events = [];
+        $this->eventManager = $this->recordingEvents($events);
+
+        $this->submit(['payment_method' => 'zero_stripe'] + self::VALID);
+
+        $this->assertSame('zero_checkout_place_order_failed', $events[0][0] ?? null);
+        $this->assertSame($failure, $events[0][1]['exception']);
+        $this->assertSame(['We can\'t place the order right now. Please try again.'], $this->errors);
+    }
+
+    /**
+     * The order was saved, then a later step threw: the event says which order, so nothing releases its payment.
+     */
+    public function testFailureAfterTheOrderWasSavedCarriesItsId(): void
+    {
+        $this->orderLoadFailure = new \RuntimeException('deadlock');
+        $events = [];
+        $this->eventManager = $this->recordingEvents($events);
+
+        $this->submit(self::VALID);
+
+        $this->assertSame(77, $events[0][1]['order_id']);
+        $this->assertSame('zero/checkout/index', $this->redirectPath);
+    }
+
+    public function testFailingFailureObserverIsLoggedAndTheCustomerStillGetsTheMessage(): void
+    {
+        $this->cartManagement->method('placeOrder')
+            ->willThrowException(new LocalizedException(__('Your card payment was not completed.')));
+        $eventManager = $this->createMock(EventManager::class);
+        $eventManager->expects($this->once())->method('dispatch')->willThrowException(new \RuntimeException('observer'));
+        $this->eventManager = $eventManager;
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('error')
+            ->with('Zero Checkout: zero_checkout_place_order_failed observer failed: observer');
+
+        $this->submit(self::VALID);
+
+        $this->assertSame(['Your card payment was not completed.'], $this->errors);
+        $this->assertSame('zero/checkout/index', $this->redirectPath);
+    }
+
+    public function testSuccessDispatchesNoFailureEvent(): void
+    {
+        $eventManager = $this->createMock(EventManager::class);
+        $eventManager->expects($this->never())->method('dispatch');
+        $this->eventManager = $eventManager;
+
+        $this->submit(self::VALID);
+
+        $this->assertSame('checkout/onepage/success', $this->redirectPath);
+    }
+
+    public function testAfterPlaceFailureAddsOrderComment(): void
+    {
+        $handler = $this->createStub(AfterPlaceOrderInterface::class);
+        $handler->method('execute')->willThrowException(new \RuntimeException('Could not save an invoice'));
+        $this->afterPlaceOrder = ['stripe_capture' => $handler];
+        $history = $this->createMock(OrderStatusHistoryInterface::class);
+        $history->expects($this->once())->method('setParentId')->with(77)->willReturnSelf();
+        $history->expects($this->once())->method('setEntityName')->with('order')->willReturnSelf();
+        $history->expects($this->once())->method('setStatus')->with('processing')->willReturnSelf();
+        $history->expects($this->once())->method('setIsCustomerNotified')->with(0)->willReturnSelf();
+        $history->expects($this->once())->method('setIsVisibleOnFront')->with(0)->willReturnSelf();
+        $history->expects($this->once())->method('setComment')->with(
+            'After-order step "stripe_capture" failed: Could not save an invoice (details in var/log/exception.log)'
+        )->willReturnSelf();
+        $this->history = $history;
+        $historyRepository = $this->createMock(OrderStatusHistoryRepositoryInterface::class);
+        $historyRepository->expects($this->once())->method('save')->with($history)->willReturn($history);
+        $this->historyRepository = $historyRepository;
+        // The order itself is never saved: a failed capture can leave it changed in memory.
+        $orderRepository = $this->createMock(OrderRepositoryInterface::class);
+        $orderRepository->expects($this->never())->method('save');
+        $this->orderRepository = $orderRepository;
+
+        $this->submit(self::VALID);
+
+        $this->assertSame('checkout/onepage/success', $this->redirectPath);
+        $this->assertSame([], $this->errors);
+    }
+
+    public function testCommentThatCannotBeSavedIsOnlyLogged(): void
+    {
+        $handler = $this->createStub(AfterPlaceOrderInterface::class);
+        $handler->method('execute')->willThrowException(new \RuntimeException('boom'));
+        $this->afterPlaceOrder = ['stripe_capture' => $handler];
+        $historyRepository = $this->createMock(OrderStatusHistoryRepositoryInterface::class);
+        $historyRepository->expects($this->once())->method('save')->willThrowException(new \RuntimeException('db gone'));
+        $this->historyRepository = $historyRepository;
+        $logged = [];
+        $logger = $this->createStub(LoggerInterface::class);
+        $logger->method('error')->willReturnCallback(function ($message) use (&$logged) {
+            $logged[] = (string) $message;
+        });
+        $this->logger = $logger;
+
+        $this->submit(self::VALID);
+
+        $this->assertSame('checkout/onepage/success', $this->redirectPath);
+        $this->assertSame([
+            'Zero Checkout after-place-order handler "stripe_capture" failed for order 000000077: boom',
+            'Zero Checkout: comment on order 000000077 for the failed step "stripe_capture" not saved: db gone',
+        ], $logged);
+    }
+
+    /**
+     * @param list<array{string, array<string, mixed>}> $events
+     */
+    private function recordingEvents(array &$events): EventManager
+    {
+        $eventManager = $this->createStub(EventManager::class);
+        $eventManager->method('dispatch')->willReturnCallback(function (string $name, array $data = []) use (&$events) {
+            $events[] = [$name, $data];
+        });
+
+        return $eventManager;
     }
 
     /**
@@ -241,8 +441,11 @@ class PlaceorderTest extends TestCase
         $address->method('getShippingRateByCode')->willReturn($this->rate);
         $quote = $this->createPartialMockWithReflection(Quote::class, [
             'getId', 'getShippingAddress', 'getPayment', 'collectTotals', 'setTotalsCollectedFlag', 'getBaseGrandTotal', 'isVirtual',
+            'getReservedOrderId',
         ]);
+        $this->quote = $quote;
         $quote->method('getId')->willReturn(9);
+        $quote->method('getReservedOrderId')->willReturn('000000077');
         $quote->method('isVirtual')->willReturn(false);
         // Something to pay (nothing would place it with "free", Zero_GiftCard's case).
         $quote->method('getBaseGrandTotal')->willReturn(42.0);
@@ -265,8 +468,19 @@ class PlaceorderTest extends TestCase
         );
         $order = $this->createStub(Order::class);
         $order->method('getPayment')->willReturn($orderPayment);
-        $orderRepository = $this->createStub(OrderRepositoryInterface::class);
-        $orderRepository->method('get')->willReturn($order);
+        $order->method('getEntityId')->willReturn(77);
+        $order->method('getIncrementId')->willReturn('000000077');
+        $order->method('getStatus')->willReturn('processing');
+        $orderRepository = $this->orderRepository ?? $this->createStub(OrderRepositoryInterface::class);
+        if ($this->orderLoadFailure !== null) {
+            $orderRepository->method('get')->willThrowException($this->orderLoadFailure);
+        } else {
+            $orderRepository->method('get')->willReturn($order);
+        }
+        $historyFactory = $this->createStub(OrderStatusHistoryInterfaceFactory::class);
+        $historyFactory->method('create')->willReturnCallback(
+            fn () => $this->history ?? $this->createStub(OrderStatusHistoryInterface::class)
+        );
 
         (new Placeorder(
             $request,
@@ -280,6 +494,9 @@ class PlaceorderTest extends TestCase
             $formKeyValidator,
             $this->logger ?? $this->createStub(LoggerInterface::class),
             new SupportedPaymentMethods(),
+            $this->eventManager ?? $this->createStub(EventManager::class),
+            $this->historyRepository ?? $this->createStub(OrderStatusHistoryRepositoryInterface::class),
+            $historyFactory,
             $this->validators,
             $this->afterPlaceOrder
         ))->execute();

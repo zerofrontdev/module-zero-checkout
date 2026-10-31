@@ -43,7 +43,7 @@ class ShippingAddressUpdater
         $this->applyFields($address, $data);
 
         if (!$quote->getCustomer() || !$quote->getCustomer()->getId()) {
-            $quote->setCustomerEmail((string) ($data['email'] ?? $quote->getCustomerEmail()));
+            $quote->setCustomerEmail(self::email($quote, $data));
         }
 
         $address->setCollectShippingRates(true);
@@ -180,7 +180,7 @@ class ShippingAddressUpdater
         $this->applyFields($billingAddress, $data);
 
         if (!$quote->getCustomer() || !$quote->getCustomer()->getId()) {
-            $billingAddress->setEmail((string) ($data['email'] ?? $quote->getCustomerEmail()));
+            $billingAddress->setEmail(self::email($quote, $data));
         }
 
         $this->cartRepository->save($quote);
@@ -195,6 +195,10 @@ class ShippingAddressUpdater
     {
         $addressData = [];
         foreach (self::ADDRESS_FIELDS as $field) {
+            // An array (firstname[]=x) counts as missing: the address keeps its value.
+            if (isset($data[$field]) && !is_scalar($data[$field])) {
+                continue;
+            }
             if (isset($data[$field]) && $data[$field] !== '') {
                 $addressData[$field] = $field === 'street' ? [$data[$field]] : $data[$field];
             } elseif (isset($data[$field]) && in_array($field, self::CLEARABLE_FIELDS, true)) {
@@ -203,6 +207,18 @@ class ShippingAddressUpdater
         }
 
         $address->addData($addressData);
+    }
+
+    /**
+     * The guest's email from the form; an array (email[]=x) counts as missing.
+     *
+     * @param array<string, mixed> $data
+     */
+    private static function email(Quote $quote, array $data): string
+    {
+        $email = $data['email'] ?? null;
+
+        return is_scalar($email) ? (string) $email : (string) $quote->getCustomerEmail();
     }
 
     /**
@@ -232,7 +248,7 @@ class ShippingAddressUpdater
         $this->applyFields($billingAddress, $remapped);
 
         if (!$quote->getCustomer() || !$quote->getCustomer()->getId()) {
-            $billingAddress->setEmail((string) ($data['email'] ?? $quote->getCustomerEmail()));
+            $billingAddress->setEmail(self::email($quote, $data));
         }
 
         $this->cartRepository->save($quote);

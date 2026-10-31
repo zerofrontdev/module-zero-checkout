@@ -70,6 +70,9 @@ class OrderComment implements PlaceOrderValidatorInterface, AfterPlaceOrderInter
      */
     private function comment(array $request): string
     {
-        return trim((string) ($request[self::FIELD] ?? ''));
+        $comment = $request[self::FIELD] ?? '';
+
+        // An array (order_comment[]=x) counts as no comment.
+        return is_scalar($comment) ? trim((string) $comment) : '';
     }
 }

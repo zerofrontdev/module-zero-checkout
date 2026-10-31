@@ -15,8 +15,10 @@ use Magento\Sales\Model\Order;
  * A redirect payment's "the customer is back, what happened?": asks the
  * provider about the order's payment, captures, cancels or flags the order
  * accordingly and says which (a ReturnResult state). Registered per payment
- * method code in Resolver\PaymentReturn's `updaters`, so a headless
- * storefront finishes any of them through one mutation.
+ * method code in `Updaters` (global di.xml) and/or Resolver\PaymentReturn's
+ * `updaters`, so a headless storefront finishes any of them through one
+ * mutation and the recheck cron asks about pending orders. It must be
+ * idempotent and safe to run from the cron.
  */
 interface OrderUpdaterInterface
 {

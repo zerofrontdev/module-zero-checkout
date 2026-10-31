@@ -45,7 +45,8 @@ class Coupon implements HttpPostActionInterface
     {
         $quote = $this->checkoutSession->getQuote();
         $error = null;
-        $code = trim((string) $this->request->getParam('coupon_code', ''));
+        $code = $this->request->getParam('coupon_code', '');
+        $code = trim(is_scalar($code) ? (string) $code : '');
 
         if ($this->config->isCouponEnabled() && $quote->getId()) {
             try {

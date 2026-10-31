@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!--
+    Copyright © 2026 Roman Pasichnyk
+    SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+    <!--
+        The redirect-payment methods the recheck cron (Cron\RecheckPending) and
+        the headless Resolver\PaymentReturn can ask "was this order paid?",
+        by payment method code. A payment module adds its OrderUpdaterInterface
+        in its own global etc/di.xml, next to its Webhooks handler. Methods
+        that capture on their own pull (Afterpay, Zip, PayPal, Amazon Pay) are
+        not listed.
+    -->
+    <type name="Zero\Checkout\Model\RedirectPayment\Updaters">
+        <arguments>
+            <argument name="updaters" xsi:type="array"/>
+        </arguments>
+    </type>
+</config>

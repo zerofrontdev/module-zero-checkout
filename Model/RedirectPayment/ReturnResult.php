@@ -11,6 +11,7 @@ namespace Zero\Checkout\Model\RedirectPayment;
 use Magento\Checkout\Model\Session as CheckoutSession;
 use Magento\Framework\Controller\Result\Redirect;
 use Magento\Framework\Controller\ResultFactory;
+use Magento\Framework\Event\ManagerInterface as EventManager;
 use Magento\Framework\Message\ManagerInterface as MessageManager;
 use Magento\Sales\Model\Order;
 
@@ -23,6 +24,11 @@ use Magento\Sales\Model\Order;
  * - UNCONFIRMED: the same, when the provider couldn't be asked;
  * - FAILED: the cart restored, back to the checkout page with a message
  *   (the order was cancelled before).
+ *
+ * Whenever the cart is restored the event zero_checkout_quote_restored is
+ * dispatched with `order` and `quote` (the headless twin, CartOrder::restoreQuote,
+ * dispatches it too), so a module that tied the cart to the order, e.g. a
+ * quote request's claim, can let go of it.
  */
 class ReturnResult
 {
@@ -32,11 +38,14 @@ class ReturnResult
     public const UNCONFIRMED = 'unconfirmed';
     /** No payment was started on the provider's page. */
     public const NOT_STARTED = 'not_started';
+    /** Dispatched with `order` and `quote` after the quote of an unpaid order was made active again. */
+    public const QUOTE_RESTORED_EVENT = 'zero_checkout_quote_restored';
 
     public function __construct(
         private readonly CheckoutSession $checkoutSession,
         private readonly ResultFactory $resultFactory,
-        private readonly MessageManager $messageManager
+        private readonly MessageManager $messageManager,
+        private readonly EventManager $eventManager
     ) {
     }
 
@@ -63,7 +72,14 @@ class ReturnResult
         switch ($state) {
             case self::FAILED:
             case self::NOT_STARTED:
-                $this->checkoutSession->restoreQuote();
+                // restoreQuote() forgets the last order, so it is read first.
+                $order = $this->checkoutSession->getLastRealOrder();
+                if ($this->checkoutSession->restoreQuote()) {
+                    $this->eventManager->dispatch(self::QUOTE_RESTORED_EVENT, [
+                        'order' => $order,
+                        'quote' => $this->checkoutSession->getQuote(),
+                    ]);
+                }
                 $this->messageManager->addErrorMessage(
                     __('The payment didn\'t go through. Your cart is unchanged: try again or choose another payment method.')
                 );

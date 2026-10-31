@@ -34,6 +34,7 @@
                 <headless_url/>
                 <google_places_api_key backend_model="Magento\Config\Model\Config\Backend\Encrypted"/>
                 <webhook_queue>0</webhook_queue>
+                <recheck_pending>0</recheck_pending>
             </zero_checkout>
         </checkout>
     </default>

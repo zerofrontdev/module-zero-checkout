@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!--
+    Copyright © 2026 Roman Pasichnyk
+    SPDX-License-Identifier: OSL-3.0 OR AFL-3.0
+-->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Cron:etc/crontab.xsd">
+    <group id="default">
+        <!-- Payment Webhooks > Recheck Pending Payments (off by default): asks the provider about redirect-payment orders left pending. -->
+        <job name="zero_checkout_recheck_pending" instance="Zero\Checkout\Cron\RecheckPending" method="execute">
+            <schedule>*/15 * * * *</schedule>
+        </job>
+    </group>
+</config>

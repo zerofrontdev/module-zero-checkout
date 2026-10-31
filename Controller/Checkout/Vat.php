@@ -40,8 +40,10 @@ class Vat implements PrivateFragmentActionInterface
      */
     public function execute()
     {
-        $country = strtoupper(trim((string) $this->request->getParam('country_id', '')));
-        $number = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', (string) $this->request->getParam('vat_id', '')));
+        $country = $this->request->getParam('country_id', '');
+        $country = strtoupper(trim(is_scalar($country) ? (string) $country : ''));
+        $vatIdParam = $this->request->getParam('vat_id', '');
+        $number = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', is_scalar($vatIdParam) ? (string) $vatIdParam : ''));
         $status = '';
         if ($number !== '' && strlen($number) <= 20 && preg_match('/^[A-Z]{2}$/', $country)
             && $this->vat->isCountryInEU($country)

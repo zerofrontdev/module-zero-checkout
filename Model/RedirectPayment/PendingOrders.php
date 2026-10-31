@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace Zero\Checkout\Model\RedirectPayment;
 
-use Magento\Framework\Lock\LockManagerInterface;
 use Magento\Sales\Model\Order;
 use Magento\Sales\Model\ResourceModel\Order\CollectionFactory;
 use Psr\Log\LoggerInterface;
@@ -17,7 +16,7 @@ use Psr\Log\LoggerInterface;
  * For a redirect payment without webhooks (Afterpay, Zip): the orders still
  * waiting for the provider's answer, rechecked by a cron, and given up after
  * a while. Every update of an order (by the cron or by the customer coming
- * back) runs under the order's lock, so the two never capture twice.
+ * back) runs under the order's lock (OrderLock), so the two never capture twice.
  */
 class PendingOrders
 {
@@ -25,11 +24,10 @@ class PendingOrders
     public const MIN_AGE = 600;
     /** Rechecked this long; older orders are cancelled by expire(). */
     public const MAX_AGE = 2 * 86400;
-    private const LOCK = 'zero_redirect_payment_';
 
     public function __construct(
         private readonly CollectionFactory $orders,
-        private readonly LockManagerInterface $locks,
+        private readonly OrderLock $orderLock,
         private readonly OrderPayment $orderPayment,
         private readonly LoggerInterface $logger
     ) {
@@ -39,28 +37,22 @@ class PendingOrders
      * Runs $update for the order under its lock, the order reloaded once the
      * lock is held (another process may have settled it meanwhile).
      *
+     * @deprecated use OrderLock::run(); kept for callers outside this module
      * @template T
      * @param callable(Order): T $update
      * @return T
+     * @throws OrderLockedException (a LocalizedException, not a RuntimeException as before) when another process holds the lock
      */
     public function locked(Order $order, callable $update): mixed
     {
-        $name = self::LOCK . $order->getIncrementId();
-        if (!$this->locks->lock($name, 10)) {
-            throw new \RuntimeException('Order ' . $order->getIncrementId() . ' is being updated by another process.');
-        }
-        try {
-            $fresh = $this->orders->create()->addFieldToFilter('entity_id', (int) $order->getId())->getFirstItem();
-            return $update($fresh->getId() ? $fresh : $order);
-        } finally {
-            $this->locks->unlock($name);
-        }
+        return $this->orderLock->run($order, $update, 10);
     }
 
     /**
      * Rechecks every pending order of a method placed between MIN_AGE and
      * MAX_AGE ago (the cron's job); then cancels the ones older than
-     * $expireAfter seconds the provider never confirmed, so an abandoned
+     * $expireAfter seconds the provider never confirmed (it is asked once more
+     * first, and an unreachable provider keeps the order), so an abandoned
      * checkout doesn't hold the stock forever.
      *
      * @param callable(Order): mixed $update
@@ -76,11 +68,11 @@ class PendingOrders
         }
         foreach ($this->pending($methodCode, $expireAfter, 30 * 86400) as $order) {
             try {
-                $this->locked($order, function (Order $order) use ($provider, $expireAfter): void {
-                    if ($order->getState() === Order::STATE_PENDING_PAYMENT) {
-                        $this->orderPayment->cancel($order, (string) __('%1 never confirmed the payment: given up after %2 hours.', $provider, (int) round($expireAfter / 3600)));
-                    }
-                });
+                $this->orderLock->run($order, fn (Order $fresh) => $this->orderPayment->cancelUnlessPaid(
+                    $fresh,
+                    (string) __('%1 never confirmed the payment: given up after %2 hours.', $provider, (int) round($expireAfter / 3600)),
+                    $update
+                ), 10);
             } catch (\Throwable $e) {
                 $this->logger->warning(sprintf('Zero %s: expiry of order %s: %s', $provider, $order->getIncrementId(), $e->getMessage()));
             }

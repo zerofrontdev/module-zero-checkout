@@ -16,11 +16,16 @@ use Magento\Framework\App\RequestInterface;
 use Magento\Framework\Controller\Result\Redirect;
 use Magento\Framework\Controller\ResultFactory;
 use Magento\Framework\Data\Form\FormKey\Validator as FormKeyValidator;
+use Magento\Framework\Event\ManagerInterface as EventManager;
 use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\Message\ManagerInterface as MessageManager;
 use Magento\Quote\Api\CartManagementInterface;
 use Magento\Quote\Api\CartRepositoryInterface;
+use Magento\Quote\Model\Quote;
+use Magento\Sales\Api\Data\OrderInterface;
+use Magento\Sales\Api\Data\OrderStatusHistoryInterfaceFactory;
 use Magento\Sales\Api\OrderRepositoryInterface;
+use Magento\Sales\Api\OrderStatusHistoryRepositoryInterface;
 use Psr\Log\LoggerInterface;
 use Zero\Checkout\Api\AfterPlaceOrderInterface;
 use Zero\Checkout\Api\PlaceOrderValidatorInterface;
@@ -36,7 +41,10 @@ use Zero\Checkout\Model\SupportedPaymentMethods;
  * a REDIRECT_URL on the payment.
  *
  * Extension points (di.xml, see Api/ and README.md): `validators` can stop the
- * order with a message; `afterPlaceOrder` runs after it, failures only logged.
+ * order with a message; `afterPlaceOrder` runs after it, a failure is logged
+ * and noted on the order. When placing fails, `zero_checkout_place_order_failed`
+ * (quote, request, exception, order_id: the order saved before the failure, or
+ * null) tells modules, e.g. Zero_Stripe releases the card authorization.
  */
 class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
 {
@@ -58,6 +66,9 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
         private readonly FormKeyValidator $formKeyValidator,
         private readonly LoggerInterface $logger,
         private readonly SupportedPaymentMethods $supportedPaymentMethods,
+        private readonly EventManager $eventManager,
+        private readonly OrderStatusHistoryRepositoryInterface $historyRepository,
+        private readonly OrderStatusHistoryInterfaceFactory $historyFactory,
         private readonly array $validators = [],
         private readonly array $afterPlaceOrder = []
     ) {
@@ -80,7 +91,7 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
         $quote = $this->checkoutSession->getQuote();
         $params = $this->request->getParams();
 
-        $shippingMethod = (string) ($params['shipping_method'] ?? '');
+        $shippingMethod = self::param($params, 'shipping_method');
         // Only virtual items (licenses, gift cards): nothing to ship.
         if ($shippingMethod === '' && !$quote->isVirtual()) {
             $this->messageManager->addErrorMessage(__('Please select a shipping method.'));
@@ -89,7 +100,7 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
             return $resultRedirect;
         }
 
-        $paymentMethod = (string) ($params['payment_method'] ?? '');
+        $paymentMethod = self::param($params, 'payment_method');
         if (!$this->supportedPaymentMethods->isSupported($paymentMethod)) {
             $this->messageManager->addErrorMessage(__('Please select a payment method.'));
             $resultRedirect->setPath('zero/checkout/index');
@@ -97,6 +108,7 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
             return $resultRedirect;
         }
 
+        $orderId = null;
         try {
             $this->addressUpdater->apply($quote, $params);
             $this->addressUpdater->applyBilling($quote, $params);
@@ -121,17 +133,17 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
             // reads the nonce; Stripe/Authorize.Net capture() verify the intent / charge
             // with the opaque token.
             $additionalData = [];
-            if (isset($params['payment_method_nonce']) && $params['payment_method_nonce'] !== '') {
-                $additionalData['payment_method_nonce'] = (string) $params['payment_method_nonce'];
+            if (self::param($params, 'payment_method_nonce') !== '') {
+                $additionalData['payment_method_nonce'] = self::param($params, 'payment_method_nonce');
             }
-            if (isset($params['stripe_payment_intent_id']) && $params['stripe_payment_intent_id'] !== '') {
-                $additionalData['stripe_payment_intent_id'] = (string) $params['stripe_payment_intent_id'];
+            if (self::param($params, 'stripe_payment_intent_id') !== '') {
+                $additionalData['stripe_payment_intent_id'] = self::param($params, 'stripe_payment_intent_id');
             }
-            if (isset($params['authnet_data_descriptor']) && $params['authnet_data_descriptor'] !== '') {
-                $additionalData['authnet_data_descriptor'] = (string) $params['authnet_data_descriptor'];
+            if (self::param($params, 'authnet_data_descriptor') !== '') {
+                $additionalData['authnet_data_descriptor'] = self::param($params, 'authnet_data_descriptor');
             }
-            if (isset($params['authnet_data_value']) && $params['authnet_data_value'] !== '') {
-                $additionalData['authnet_data_value'] = (string) $params['authnet_data_value'];
+            if (self::param($params, 'authnet_data_value') !== '') {
+                $additionalData['authnet_data_value'] = self::param($params, 'authnet_data_value');
             }
             // Any other method: fields named payment_additional_data[<key>] (scalars only)
             // reach its assignData() / payment additional_data unchanged.
@@ -143,8 +155,8 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
             // Purchase Order: stock Purchaseorder::assignData() reads po_number from the
             // top level (not additional_data); its validate() rejects an empty one.
             $paymentData = ['method' => $paymentMethod, 'additional_data' => $additionalData];
-            if (isset($params['po_number']) && $params['po_number'] !== '') {
-                $paymentData['po_number'] = (string) $params['po_number'];
+            if (self::param($params, 'po_number') !== '') {
+                $paymentData['po_number'] = self::param($params, 'po_number');
             }
             $quote->getPayment()->importData($paymentData);
 
@@ -198,9 +210,19 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
                 $resultRedirect->setPath('checkout/onepage/success');
             }
         } catch (LocalizedException $e) {
+            $this->failed($quote, $params, $e, $orderId);
             $this->messageManager->addErrorMessage($e->getMessage());
             $resultRedirect->setPath('zero/checkout/index');
         } catch (\Exception $e) {
+            $payment = $quote->getPayment();
+            $this->logger->error('Zero Checkout: place order failed', [
+                'quote_id' => $quote->getId(),
+                'reserved_order_id' => $quote->getReservedOrderId(),
+                'payment_method' => $payment?->getMethod(),
+                'stripe_payment_intent_id' => $payment?->getAdditionalInformation('stripe_payment_intent_id'),
+                'exception' => $e,
+            ]);
+            $this->failed($quote, $params, $e, $orderId);
             $this->messageManager->addErrorMessage(
                 __('We can\'t place the order right now. Please try again.')
             );
@@ -227,7 +249,41 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
     }
 
     /**
-     * @param \Magento\Sales\Api\Data\OrderInterface $order
+     * A posted field as text. An array (shipping_method[]=x) counts as
+     * missing, so the action answers as for an empty field instead of
+     * "Array to string conversion".
+     *
+     * @param array<string, mixed> $params
+     */
+    private static function param(array $params, string $key): string
+    {
+        $value = $params[$key] ?? '';
+
+        return is_scalar($value) ? (string) $value : '';
+    }
+
+    /**
+     * Tells modules that placing failed (`zero_checkout_place_order_failed`).
+     * A failing observer is logged: the customer still gets the message.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function failed(Quote $quote, array $params, \Exception $exception, mixed $orderId): void
+    {
+        try {
+            $this->eventManager->dispatch('zero_checkout_place_order_failed', [
+                'quote' => $quote,
+                'request' => $params,
+                'exception' => $exception,
+                'order_id' => $orderId ? (int) $orderId : null,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->error('Zero Checkout: zero_checkout_place_order_failed observer failed: ' . $e->getMessage(), ['exception' => $e]);
+        }
+    }
+
+    /**
+     * @param OrderInterface $order
      * @param array<string, mixed> $params
      */
     private function runAfterPlaceOrder($order, array $params): void
@@ -244,7 +300,38 @@ class Placeorder implements HttpPostActionInterface, CsrfAwareActionInterface
                         $name, $order->getIncrementId(), $e->getMessage()),
                     ['exception' => $e]
                 );
+                $this->noteFailure($order, (string) $name, $e);
             }
+        }
+    }
+
+    /**
+     * The order comment for a failed after-order step, written as a history
+     * row only: the order itself is not saved, since a failed step (an online
+     * capture, say) can leave the loaded order changed in memory.
+     */
+    private function noteFailure(OrderInterface $order, string $name, \Throwable $failure): void
+    {
+        try {
+            $history = $this->historyFactory->create();
+            $history->setParentId((int) $order->getEntityId());
+            $history->setEntityName('order');
+            $history->setStatus((string) $order->getStatus());
+            $history->setIsCustomerNotified(0);
+            $history->setIsVisibleOnFront(0);
+            $history->setComment((string) __(
+                'After-order step "%1" failed: %2 (details in var/log/exception.log)',
+                $name,
+                $failure->getMessage()
+            ));
+            $this->historyRepository->save($history);
+        } catch (\Throwable $e) {
+            $this->logger->error(sprintf(
+                'Zero Checkout: comment on order %s for the failed step "%s" not saved: %s',
+                $order->getIncrementId(),
+                $name,
+                $e->getMessage()
+            ));
         }
     }
 }

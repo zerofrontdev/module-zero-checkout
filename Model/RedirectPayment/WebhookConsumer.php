@@ -54,8 +54,9 @@ class WebhookConsumer
             return;
         }
         try {
-            $this->webhooks->handler($method)->webhook($order, $data);
-        } catch (\InvalidArgumentException $e) {
+            $this->webhooks->settle($order, $method, $data);
+        } catch (NoWebhookHandlerException $e) {
+            // Retrying can't help. Anything else, a lock held by another process included, is tried again.
             $this->logger->error($e->getMessage());
         } catch (\Throwable $e) {
             if ($attempt < self::ATTEMPTS) {
