@@ -2,7 +2,7 @@
     "name": "zerofront/module-zero-checkout",
     "description": "Zero for Magento Open Source: a one-page checkout without Knockout: server-rendered HTML, one native form, HTMX for the parts that refresh.",
     "type": "magento2-module",
-    "version": "1.3.7",
+    "version": "1.3.8",
     "license": [
         "OSL-3.0",
         "AFL-3.0"
@@ -41,7 +41,7 @@
         "magento/module-sales": "*",
         "magento/module-store": "*",
         "magento/module-tax": "*",
-        "zerofront/module-zero-core": "^1.3.7"
+        "zerofront/module-zero-core": "^1.3.8"
     },
     "replace": {
         "fixstacks/module-zero-checkout": "self.version"
